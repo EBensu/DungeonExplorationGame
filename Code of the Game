@@ -1,0 +1,677 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <strings.h>
+
+#define INVENTORY_SIZE 5
+//I prefer to use typedef to increase readability
+typedef struct{
+  int health;
+  int strength;
+}Statistics;
+typedef struct {
+  char *name;
+  Statistics stats;
+  char *description;
+  int isAlive; //to determine state of the creature
+}Creature;
+typedef struct{
+  char *name;
+  char *description;
+  int damage;
+  int isMagicItem;
+  int healthRestore;
+ 
+}Item;
+typedef struct Room {
+  char *description;          
+  char *name;                
+  int itemNumber;           
+  int specialItemNumber;      
+  int roomComplexity;        
+  Item *ordinaryItems;       
+  Item *magicItems;          
+  Creature *creature;         
+  struct Room *up;          
+  struct Room *down;          
+   struct Room *left;         
+  struct Room *right;         
+} Room;
+typedef struct {
+   char *name;
+   Statistics stats;
+   int playerInventoryCapacity;
+   Room *currentRoom;
+   Item inventory[INVENTORY_SIZE];
+}Player;
+Creature createCreature(char *name, char *description, int health, int strength) {
+    Creature creature;
+    creature.name = name;
+    creature.description = description;
+    creature.stats.health = health;
+    creature.stats.strength = strength;
+    creature.isAlive = 1;
+    return creature;
+}
+char *getPlayerName(){
+  char tempName[50];
+  printf("Enter a name for your character: ");
+  fgets(tempName,sizeof(tempName),stdin);
+  tempName[strcspn(tempName,"\n")]=0;
+  return strdup(tempName);
+
+}
+char* allocateString(const char* srcString) {
+    char* str = (char*)malloc(strlen(srcString) + 1); 
+    if (!str) {
+        perror("Error: Failed for the determine description/name. Exiting...");
+      
+        exit(EXIT_FAILURE);
+    }
+    strcpy(str, srcString);
+    return str;
+}
+
+Item createItem(const char *name, const char *description,int damage,int isMagicItem){
+  Item item;
+  item.name=allocateString(name);
+  item.description=allocateString(description);
+  item.damage=damage;
+  item.isMagicItem=isMagicItem;
+  item.healthRestore = 0;
+  return item;
+}
+Room* newRoom(char *name, char *description) {
+    Room *nRoom = (Room *)malloc(sizeof(Room));  
+    if (!nRoom) {  
+        fprintf(stderr, "Error: New Room couldn't be created...\n");
+        return NULL;  
+    }
+
+    
+    nRoom->name = name;  
+    nRoom->description = description;
+    nRoom->up = nRoom->right = nRoom->left = nRoom->down = NULL;  
+    nRoom->ordinaryItems = NULL;  
+    nRoom->magicItems = NULL;     
+    nRoom->itemNumber = 0;        
+    nRoom->specialItemNumber = 0; 
+
+    return nRoom;  
+}
+void connectRooms(Room *room1, Room *room2, const char *direction) {
+   
+    if (!room1 || !room2) {
+        fprintf(stderr, "Error: One or both rooms are NULL. Navigation ineffective.\n");
+        return;
+    }
+
+   
+    if (!direction || (
+        strcmp(direction, "up") != 0 &&
+        strcmp(direction, "down") != 0 &&
+        strcmp(direction, "left") != 0 &&
+        strcmp(direction, "right") != 0)) {
+        fprintf(stderr, "Error: Invalid direction '%s'. Valid directions are 'up', 'down', 'left', 'right'.\n", direction ? direction : "NULL");
+        return;
+    }
+
+   
+    if (strcmp(direction, "up") == 0) {
+        room1->up = room2;
+        room2->down = room1;
+        //printf("Rooms connected: Room1 (up) -> Room2 (down)\n");
+    }
+    else if (strcmp(direction, "down") == 0) {
+        room1->down = room2;
+        room2->up = room1;
+        //printf("Rooms connected: Room1 (down) -> Room2 (up)\n");
+    }
+    else if (strcmp(direction, "right") == 0) {
+        room1->right = room2;
+        room2->left = room1;
+        //printf("Rooms connected: Room1 (right) -> Room2 (left)\n");
+    }
+    else if (strcmp(direction, "left") == 0) {
+        room1->left = room2;
+        room2->right = room1;
+       // printf("Rooms connected: Room1 (left) -> Room2 (right)\n");
+    }
+}
+void describeRoom(Room *room) {
+    
+    if (!room) {
+        fprintf(stderr, "Error: Room is empty... Maybe the game developer forget that room :) \n");
+        return;
+    }
+    printf("You are in the room: %s\n", room->name);
+    printf("%s\n", room->description);
+
+    
+    printf("Exits: ");
+    if (room->up) printf("Up ");
+    if (room->down) printf("Down ");
+    if (room->left) printf("Left ");
+    if (room->right) printf("Right ");
+    printf("\n");
+
+    
+    printf("\nItems in this room:\n");
+    for (int i = 0; i < room->itemNumber; i++) {
+        printf("- %s: %s (Damage: %d)\n", 
+               room->ordinaryItems[i].name, 
+               room->ordinaryItems[i].description, 
+               room->ordinaryItems[i].damage);
+    }
+
+    
+    if (room->specialItemNumber > 0) {
+        printf("\nMagic Items in the room:\n");
+        for (int i = 0; i < room->specialItemNumber; i++) {
+            printf("- %s: %s (Damage: %d)\n", 
+                   room->magicItems[i].name, 
+                   room->magicItems[i].description, 
+                   room->magicItems[i].damage);
+        }
+    } else {
+        printf("\nNo special items in this room.\n");
+    }
+    
+    
+    if (room->creature != NULL && room->creature->isAlive) {
+        printf("\nA creature is here! It is: %s\n", room->creature->name);
+        printf("Description: %s\n", room->creature->description);
+    } else if (room->creature != NULL) {
+        printf("\nThere was a creature here, but it is no longer alive.\n");
+    } else {
+        printf("\nNo creatures in this room.\n");
+    }
+}
+void navigateRoom(Room **currentRoom) {
+    
+    if (!currentRoom || !(*currentRoom)) {
+        fprintf(stderr, "Error: Current room is empty...\n");
+        return;
+    }
+
+    char direction[10];  
+
+
+    printf("Which direction do you want to go? Choose one of the valid directions (up, down, left, right): ");
+    scanf("%s", direction);
+
+   
+    if (strcmp(direction, "up") == 0 && (*currentRoom)->up) {
+        *currentRoom = (*currentRoom)->up;  
+        printf("You moved up to %s.\n", (*currentRoom)->name);
+    }
+    else if (strcmp(direction, "down") == 0 && (*currentRoom)->down) {
+        *currentRoom = (*currentRoom)->down;  
+        printf("You moved down to %s.\n", (*currentRoom)->name);
+    }
+    else if (strcmp(direction, "left") == 0 && (*currentRoom)->left) {
+        *currentRoom = (*currentRoom)->left;  
+        printf("You moved left to %s.\n", (*currentRoom)->name);
+    }
+    else if (strcmp(direction, "right") == 0 && (*currentRoom)->right) {
+        *currentRoom = (*currentRoom)->right;  
+        printf("You moved right to %s.\n", (*currentRoom)->name);
+    } 
+    else {
+        
+        printf("Invalid direction or no room in that direction. Please enter a valid direction to continue.\n");
+    }
+}
+
+void freeRoom(Room *room) {
+    if (room) {
+        free(room->name);
+        free(room->description);
+        if (room->ordinaryItems) free(room->ordinaryItems);
+        if (room->magicItems) free(room->magicItems);
+        free(room);
+    }
+}
+
+void freePlayer(Player *player) {
+    if (player) {
+        free(player->name);
+        for (int i = 0; i < player->playerInventoryCapacity; i++) {
+            free(player->inventory[i].name);
+            free(player->inventory[i].description);
+        }
+    }
+}
+
+void look(Room *currentRoom) {
+    describeRoom(currentRoom); 
+}
+void inventory(Player *player){
+  printf("Inventory:\n");
+  for(int a=0;a<player->playerInventoryCapacity;a++){
+    if(player->inventory[a].name){
+      printf("%d. %s: %s (Damage of the Item: %d )\n",a+1,player->inventory[a].name,player->inventory[a].description,player->inventory[a].damage);
+    }
+  }
+
+}
+void useItem(Player *player, const char *itemName) {
+    int itemFound = 0;
+    for (int i = 0; i < player->playerInventoryCapacity; i++) {
+        if (strcmp(player->inventory[i].name, itemName) == 0) {
+            itemFound = 1;
+            Item *item = &player->inventory[i];
+            if (item->damage > 0) {
+                printf("You use %s and increase your attack by %d!\n", item->name, item->damage);
+                player->stats.strength += item->damage;
+            } else if (item->healthRestore > 0) {
+                printf("You use %s and restore %d health!\n", item->name, item->healthRestore);
+                player->stats.health += item->healthRestore;
+            }
+
+           
+            for (int j = i; j < player->playerInventoryCapacity - 1; j++) {
+                player->inventory[j] = player->inventory[j + 1];
+            }
+            player->inventory[player->playerInventoryCapacity - 1].name = NULL;
+            player->playerInventoryCapacity--; 
+            return;
+        }
+    }
+
+    if (!itemFound) {
+        printf("Item not found in your inventory. Pick it up first!\n");
+    }
+}
+void attack(Player *player) {
+    if (player->currentRoom && player->currentRoom->creature && player->currentRoom->creature->isAlive) {
+        Creature *creature = player->currentRoom->creature;
+        printf("You are attacking the creature: %s\n", creature->name);
+        
+        
+         player->stats.strength-=creature->stats.strength;
+            player->stats.health-=creature->stats.health;
+        int playerDamage = player->stats.strength;
+        creature->stats.health -= playerDamage;
+        printf("You deal %d damage to the %s. Creature's health is now %d.\n", playerDamage, creature->name, creature->stats.health);
+
+        
+        if (creature->stats.health <= 0) {
+            creature->isAlive = 0;
+            printf("You defeated the %s!\n", creature->name);
+           
+        } else {
+           
+            int creatureDamage = creature->stats.strength;
+            player->stats.health -= creatureDamage;
+            printf("The %s retaliates! You lose %d health. Your health is now %d.\n", creature->name, creatureDamage, player->stats.health);
+
+           
+            if (player->stats.health <= 0) {
+                printf("You have been defeated by the %s. Game Over!\n", creature->name);
+                exit(0); 
+            }
+            else if(player->stats.strength<=0){
+                printf("You should have bought more items. Game over!\n");
+                exit(0);
+            }
+        }
+    } else {
+        printf("No creature to attack in this room.\n");
+    }
+}
+
+void saveGame(const char *filename, Player *player, Room *rooms, int numRooms) {
+    FILE *file = fopen(filename, "w");
+    if (file == NULL) {
+        perror("Error! The game could not be saved correctly.");
+        exit(EXIT_FAILURE);
+    }
+
+    fprintf(file, "Player Name: %s\n", player->name);
+    fprintf(file, "Health: %d\n", player->stats.health);
+    fprintf(file, "Strength: %d\n", player->stats.strength);
+    fprintf(file, "Inventory Capacity: %d\n", player->playerInventoryCapacity);
+
+    fprintf(file, "Number of Rooms: %d\n", numRooms);
+    
+    for (int i = 0; i < numRooms; i++) {
+        
+        if (rooms[i].name != NULL) {
+            fprintf(file, "Room Name: %s\n", rooms[i].name);
+        } else {
+            fprintf(file, "Room %d has no name!\n", i);
+        }
+        
+        if (rooms[i].description != NULL) {
+            fprintf(file, "Description: %s\n", rooms[i].description);
+        } else {
+            fprintf(file, "Room %d has no description!\n", i);
+        }
+
+        fprintf(file, "Room Complexity: %d\n", rooms[i].roomComplexity);
+        fprintf(file, "Item Number: %d, Special Item Number: %d\n", rooms[i].itemNumber, rooms[i].specialItemNumber);
+
+        
+        for (int j = 0; j < rooms[i].itemNumber; j++) {
+            if (rooms[i].ordinaryItems != NULL) {
+                fprintf(file, "Item %d Name: %s, Damage: %d\n", j + 1, rooms[i].ordinaryItems[j].name, rooms[i].ordinaryItems[j].damage);
+            } else {
+                fprintf(file, "No ordinary items in room %d\n", i);
+            }
+        }
+
+        
+        for (int j = 0; j < rooms[i].specialItemNumber; j++) {
+            if (rooms[i].magicItems != NULL) {
+                fprintf(file, "Item %d Name: %s, Damage: %d, Magic: %d\n", j + 1, rooms[i].magicItems[j].name, rooms[i].magicItems[j].damage, rooms[i].magicItems[j].isMagicItem);
+            } else {
+                fprintf(file, "No special items in room %d\n", i);
+            }
+        }
+    }
+
+    fclose(file);
+    printf("Game saved successfully!\n");
+}
+
+
+
+
+void loadGame(const char *filename, Player *player, Room **rooms, int *numRooms) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        perror("Error! The game could not be reloaded.");
+        exit(EXIT_FAILURE);
+    }
+
+    
+    char buffer[256];
+    fscanf(file, "Player Name: ");
+    fgets(buffer, sizeof(buffer), file);
+    buffer[strcspn(buffer, "\n")] = '\0'; 
+    player->name = malloc(strlen(buffer) + 1);
+    strcpy(player->name, buffer);
+
+    fscanf(file, "Health: %d\n", &player->stats.health);
+    fscanf(file, "Strength: %d\n", &player->stats.strength);
+    fscanf(file, "Inventory Capacity: %d\n", &player->playerInventoryCapacity);
+
+ 
+    fscanf(file, "Number of Rooms: %d\n", numRooms);
+    *rooms = malloc(*numRooms * sizeof(Room));
+    for (int i = 0; i < *numRooms; i++) {
+        fscanf(file, "Room Name: ");
+        fgets(buffer, sizeof(buffer), file);
+        buffer[strcspn(buffer, "\n")] = '\0';
+        (*rooms)[i].name = malloc(strlen(buffer) + 1);
+        strcpy((*rooms)[i].name, buffer);
+
+        fscanf(file, "Description: ");
+        fgets(buffer, sizeof(buffer), file);
+        buffer[strcspn(buffer, "\n")] = '\0';
+        (*rooms)[i].description = malloc(strlen(buffer) + 1);
+        strcpy((*rooms)[i].description, buffer);
+
+        fscanf(file, "Room Complexity: %d\n", &(*rooms)[i].roomComplexity);
+        fscanf(file, "Item Number: %d, Special Item Number: %d\n", &(*rooms)[i].itemNumber, &(*rooms)[i].specialItemNumber);
+
+        (*rooms)[i].ordinaryItems = malloc((*rooms)[i].itemNumber * sizeof(Item));
+        for (int j = 0; j < (*rooms)[i].itemNumber; j++) {
+            fscanf(file, "Item %d Name: ", &j);
+            fgets(buffer, sizeof(buffer), file);
+            buffer[strcspn(buffer, "\n")] = '\0';
+            (*rooms)[i].ordinaryItems[j].name = malloc(strlen(buffer) + 1);
+            strcpy((*rooms)[i].ordinaryItems[j].name, buffer);
+
+            fscanf(file, "Damage: %d\n", &(*rooms)[i].ordinaryItems[j].damage);
+        }
+
+        (*rooms)[i].magicItems = malloc((*rooms)[i].specialItemNumber * sizeof(Item));
+        for (int j = 0; j < (*rooms)[i].specialItemNumber; j++) {
+            fscanf(file, "Item %d Name: ", &j);
+            fgets(buffer, sizeof(buffer), file);
+            buffer[strcspn(buffer, "\n")] = '\0';
+            (*rooms)[i].magicItems[j].name = malloc(strlen(buffer) + 1);
+            strcpy((*rooms)[i].magicItems[j].name, buffer);
+
+            fscanf(file, "Damage: %d\n", &(*rooms)[i].magicItems[j].damage);
+            fscanf(file, "Magic: %d\n", &(*rooms)[i].magicItems[j].isMagicItem);
+        }
+    }
+
+    fclose(file);
+    printf("Game loaded successfully from %s!\n", filename);
+}
+void pickupItemToInventory(Player *player, Item item) {
+    if (player->playerInventoryCapacity < INVENTORY_SIZE) {
+        player->inventory[player->playerInventoryCapacity] = item;
+        player->playerInventoryCapacity++;
+        printf("You have picked up: %s\n", item.name);
+    } else {
+        printf("Inventory is full! You cannot pick up more items.\n");
+    }
+}
+
+int main(){
+   printf("\n*** Welcome to the Dungeon Adventure Game! ***\n\n");
+   
+  Player player;
+  
+  player.name = getPlayerName();
+  player.stats.health = 100;   
+  player.stats.strength = 10;   
+  player.playerInventoryCapacity = 0; 
+  for (int i = 0; i < INVENTORY_SIZE; i++) { 
+        player.inventory[i].name = NULL;
+    }
+
+  Room *entranceRoom=newRoom("\n\tEntrance of Dungeon-Level 0\n","A cold, dark dungeon filled with cobwebs and eerie silence.");
+  Room *spiderNest=newRoom("\n\tSpider Nest-Level 1\n","In the dungeon's dark room, spider nests fill every corner, with giant spiders moving silently.");
+  Room *ghostRoom=newRoom("\n\tThe Haunting of the Cursed Dungeon-Level 2\n","Echoes of lost souls reverberate through the cold stone walls, as shadowy figures await those brave enough to uncover the dungeon's dark secrets.");
+  Room *oldLibrary=newRoom("\n\tLibrary of Forgotten Mysterious Books-Level 3\n","Dust-covered shelves hold ancient books with forgotten secrets that whisper to those who dare to unravel the mysteries within.");
+  Room *wizardRoom=newRoom("\n\tThe Sorcerer's Hidden Chamber-Level 4\n","Surrounded by mystical artifacts and arcane symbols, the room hums with untold magic, waiting for a daring soul to unlock its forbidden secrets.Maybe if you go further you can learn some these secrets");
+  Room *secretFlowerPassage=newRoom("\n\tFragant Secret Room-Level 5\n","These flowers smells exceptional but in the book the flower was referred to as cursed ");//envanteri boşaltan çiçek yada canı azaltan çiçek
+  Room *fakeExit=newRoom("\n\tDoor with light coming from underneath.Maybe exit...-Level 6\n","Every Everywhere is dark, only the tiny light coming from under the door illuminates the surroundings.It's a pleasure to reach the exit.");
+  Room *mummysTomb=newRoom("\n\tThe Mummy’s Cursed Tomb-Level 7\n"," Ancient relics and golden treasures glimmer under the dust, but the air is thick with the eerie presence of a mummy guarding its eternal rest.");
+  Room *mummysCatBedroom=newRoom("\n\tMummy's Cat's Room-Level 8\n","Everywhere is full of bones and smelly what is that here? What is it about two eyes shining through the darkness? Little cat inside there I can rescue this cat from this dungeon");//kedi item artı kedi için kemik al kedi canavar?
+
+    Room **rooms = malloc(9 * sizeof(Room *)); //change this when you change the room number
+    rooms[0]= entranceRoom;
+    rooms[1]= spiderNest;
+    rooms[2]= ghostRoom;
+    rooms[3]= oldLibrary;
+    rooms[4]= wizardRoom;
+    rooms[5]= secretFlowerPassage;
+    rooms[6]= fakeExit;
+    rooms[7]= mummysTomb;
+    rooms[8]=mummysCatBedroom;
+    int numRooms = 9;  
+
+ connectRooms(entranceRoom, spiderNest, "up");
+ connectRooms(spiderNest, ghostRoom, "right");
+ connectRooms(ghostRoom, wizardRoom, "right");
+ connectRooms(wizardRoom,secretFlowerPassage ,"up");
+ connectRooms(secretFlowerPassage,fakeExit,"up");
+ connectRooms(fakeExit,mummysTomb,"up");
+ connectRooms(mummysTomb,mummysCatBedroom,"left");
+
+    // Set the player's starting room
+    player.currentRoom = entranceRoom;
+
+    
+    Creature tinyGoblin=createCreature("Tiny Goblin ","to say hi to you but also dangerous",3,1);
+    entranceRoom->creature=&tinyGoblin;
+    Creature giantSpider=createCreature("Giant Spiders\n","Enormous,black and venomous ",10,2);
+    spiderNest->creature=&giantSpider;
+    Creature ghost=createCreature("Enormous Ghosts\n","Pale, translucent, sorrowful, whispering, flickering, gloomy, silent, mysterious ghost",20,2);
+    ghostRoom->creature=&ghost;
+    Creature wizardSoul=createCreature("Wizard's Soul\n","Ancient, shadowy, and ethereal, the wizard's soul exudes both power and torment",30,3);
+    wizardRoom->creature=&wizardSoul;
+    Creature poisonousFlower=createCreature("Fragrant Flower\n","A striking and fragrant yet deadly flower with petals that glisten like dark glass. Its deep violet hue almost seems to pulse with a toxic energy, and the air around it feels thick and heavy",20,2);
+    secretFlowerPassage->creature=&poisonousFlower;
+    Creature mummysSoul=createCreature("Mummy's Soul\n","Wrapped in tattered, ancient linen, the mummy's soul drifts through time like a curse. Its essence is steeped in despair and wrath, a tortured spirit bound to an eternity of darkness. ",40,2);
+    mummysTomb->creature=&mummysSoul;
+    Creature ancientCat=createCreature("Mummy's Cat\n","A skeletal, ancient feline with hollow, unblinking eyes that gleam with an unsettling intelligence. Its fur, long since rotted away, leaves behind only withered remnants, yet its movements are strangely graceful.",35,3);
+    mummysCatBedroom->creature=&ancientCat;
+
+    Item torch=createItem("A torch\n","Some monsters don't like light.",2,0);
+    entranceRoom->ordinaryItems = malloc(sizeof(Item) * 10); 
+    entranceRoom->ordinaryItems[0] = torch;
+    entranceRoom->itemNumber=1;
+    Item insecticide=createItem("Insecticide\n","This is useful for insects",5,0);
+    spiderNest->ordinaryItems=malloc(sizeof(Item) * 10);
+    spiderNest->ordinaryItems[0]=insecticide;
+    spiderNest->itemNumber=1;
+    Item soulCatcherSword=createItem("Soul Catcher Sword\n","This enchanted sword appears to be an excellent choice for incapacitating the ghost.",10,0);
+    ghostRoom->ordinaryItems=malloc(sizeof(Item) * 10);
+    ghostRoom->ordinaryItems[0]=soulCatcherSword;
+    ghostRoom->itemNumber=1;
+    Item ancientPoison=createItem("Ancient Poison\n","This poison gives damage to powerful souls",25,0);
+    wizardRoom->ordinaryItems=malloc(sizeof(Item) * 10);
+    wizardRoom->ordinaryItems[0]=ancientPoison;
+    wizardRoom->itemNumber=1;
+    Item magicalSoil=createItem("Magical Soil\n","This soil glimmer perfectly and this is awesome choice to remove the evil of the flower",20,0);
+    secretFlowerPassage->ordinaryItems=malloc(sizeof(Item) * 10);
+    secretFlowerPassage->ordinaryItems[0]=magicalSoil;
+    secretFlowerPassage->itemNumber=2;
+    Item ringOfWizard=createItem("Ring of the wizard\n","This ring gives a huge power for you to fighting creatures.",30,1);
+    secretFlowerPassage->magicItems=malloc(sizeof(Item) * 10);
+    secretFlowerPassage->magicItems[0]=ringOfWizard;
+    secretFlowerPassage->itemNumber=2;
+    Item keyofFakeExit=createItem("A key","This might be open the door...",10,0);
+    fakeExit->ordinaryItems=malloc(sizeof(Item) * 10);
+    fakeExit->ordinaryItems[0]=keyofFakeExit;
+    fakeExit->itemNumber=1;
+    Item darkAmulet=createItem("Dark Amulet","This dark amulet can be used to trap the spirit of the mummy",15,0);
+    mummysTomb->ordinaryItems=malloc(sizeof(Item) * 10);
+    mummysTomb->ordinaryItems[0]=darkAmulet;
+    mummysTomb->itemNumber=2;
+    Item bookOfMummy=createItem("Book of the Mummy's","You can use this for defeat the creatues",20,1);
+    mummysTomb->magicItems=malloc(sizeof(Item) * 10);
+    mummysTomb->magicItems[0]=bookOfMummy;
+    mummysTomb->itemNumber=2;
+    Item ballForCat=createItem("Tiny Ball","Maybe this ancient cat loves that...",30,2);
+    mummysCatBedroom->ordinaryItems=malloc(sizeof(Item) * 10);
+    mummysCatBedroom->ordinaryItems[0]=ballForCat;
+    mummysCatBedroom->itemNumber=1;
+   char action[100];
+   int gameStart=1;
+    while (gameStart) {
+        
+        look(player.currentRoom);
+
+        
+        printf("\nYour current stats:\n");
+        printf("Health: %d\n", player.stats.health);
+        printf("Strength: %d\n", player.stats.strength);
+        inventory(&player);
+
+        
+        printf("\nWhat would you like to do?\n Navigate another room (Command: navigate)\n Look around (Command: look)\n Look your inventory (Command: inventory)\n Pickup an item (Command: pickup)\n Attack the creature (Command: attack)\n Use the item(Command: use)\n Save Game (Command: save)\n Load a saved game: (Command: load)\n Quit the game (Command:  quit)\n ");
+        fgets(action, sizeof(action), stdin);
+        action[strcspn(action, "\n")] = 0; 
+
+        if (strcmp(action, "navigate") == 0) {
+            navigateRoom(&player.currentRoom); 
+        }
+        else if (strcmp(action, "look") == 0) {
+            look(player.currentRoom); 
+        }
+        else if (strcmp(action, "inventory") == 0) {
+            inventory(&player); 
+        }
+        else if (strcmp(action, "attack") == 0) {
+            attack(&player); 
+            printf("Your current health: %d\n", player.stats.health); 
+            printf("Your current strength:%d\n",player.stats.strength);
+        }
+        else if (strcmp(action, "pickup") == 0) {
+    printf("Which item would you like to pick up? ");
+    char itemName[50];
+    fgets(itemName, sizeof(itemName), stdin);
+    itemName[strcspn(itemName, "\n")] = 0; 
+
+    int itemFound = 0;
+
+   
+    printf("Items in this room:\n");
+    for (int i = 0; i < player.currentRoom->itemNumber; i++) {
+        printf("%s\n", player.currentRoom->ordinaryItems[i].name);  
+    }
+
+    for (int i = 0; i < player.currentRoom->itemNumber; i++) {
+     if (strcmp(player.currentRoom->ordinaryItems[i].name, itemName) == 0) {
+         pickupItemToInventory(&player, player.currentRoom->ordinaryItems[i]);
+        strcpy(player.currentRoom->ordinaryItems[i].name, ""); 
+        player.currentRoom->itemNumber--; 
+        for (int j = i; j < player.currentRoom->itemNumber; j++) {
+            player.currentRoom->ordinaryItems[j] = player.currentRoom->ordinaryItems[j + 1];
+        }
+         itemFound = 1;
+         printf("You picked up: %s\n", itemName);
+         break;
+        }
+    }
+    
+    if (!itemFound) {
+     for (int i = 0; i < player.currentRoom->specialItemNumber; i++) {
+      if (strcmp(player.currentRoom->magicItems[i].name, itemName) == 0) {
+      pickupItemToInventory(&player, player.currentRoom->magicItems[i]);
+      itemFound = 1;
+       printf("You picked up the magic item: %s\n", itemName);
+        break;
+         }
+      }
+    }
+
+    if (!itemFound) {
+        printf("Item '%s' not found in this room.\n", itemName);
+    }
+}
+
+  else if (strcmp(action, "use") == 0) {
+            printf("Which item would you like to use? ");
+            char itemName[50];
+            fgets(itemName, sizeof(itemName), stdin);
+            itemName[strcspn(itemName, "\n")] = 0; 
+
+            useItem(&player, itemName);
+ }
+        else if(strcmp(action,"save")==0){
+             saveGame("savegame_new.txt", &player, rooms, numRooms);
+        }
+        else if(strcmp(action,"load") == 0){
+            
+            for (int i = 0; i < numRooms; i++) {
+                freeRoom(rooms[i]);
+            }
+            free(rooms);
+
+            loadGame("savegame.txt", &player, &rooms, &numRooms);
+        }
+        else if (strcmp(action, "quit") == 0) {
+            printf("You have quit the game.\n");
+            gameStart = 0;
+        }
+        else {
+            printf("Invalid action. Please try again.\n");
+            
+        }
+
+       
+        if (player.stats.health <= 0) {
+            printf("You have been defeated! Game Over.\n");
+            gameStart = 0;
+        }
+
+        if (mummysCatBedroom->creature && !mummysCatBedroom->creature->isAlive) {
+            printf("You have defeated the all creatures! Congratulations!\n");
+        }
+     
+        
+    }
+    return 0;
+}
+
+
+
